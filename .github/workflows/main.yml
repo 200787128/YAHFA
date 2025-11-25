@@ -1,0 +1,81 @@
+# .github/workflows/android-build.yml
+name: Build YAHFA for Android
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        build-tools-version: '34.0.0'
+        ndk-version: '25.2.9519653'
+        cmake-version: '3.22.1'
+        platforms: 'android-34'
+        
+    - name: Verify environment
+      run: |
+        echo "Java version:"
+        java -version
+        echo "Android SDK:"
+        ls $ANDROID_HOME
+        echo "NDK:"
+        ls $ANDROID_NDK_ROOT
+        
+    - name: Make gradlew executable
+      run: chmod +x ./gradlew
+      
+    - name: Build YAHFA for ${{ matrix.abi }}
+      run: |
+        echo "Building for ABI: ${{ matrix.abi }}"
+        ./gradlew clean
+        ./gradlew :yahfa:assembleRelease -PabiFilter=${{ matrix.abi }} --stacktrace
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: yahfa-${{ matrix.abi }}
+        path: |
+          yahfa/build/outputs/aar/
+          yahfa/build/intermediates/cmake/release/obj/${{ matrix.abi }}/*.so
+        retention-days: 30
+
+  create-release:
+    needs: build-android
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        files: |
+          artifacts/yahfa-*/yahfa-*.aar
+          artifacts/yahfa-*/*.so
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
